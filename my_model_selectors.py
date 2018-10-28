@@ -77,7 +77,25 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        best_score = float('inf')
+        best_num_components = self.n_constant
+        for n in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                hmm_model = self.base_model(n)
+                logL = hmm_model.score(self.X, self.lengths)
+                p = n ** 2 + 1 * n * len(self.X[0]) - 1
+                logN = math.log(len(self.lengths))
+                bic_score = - 2 * logL + p * logN
+                if bic_score < best_score:
+                    best_score = bic_score
+                    best_num_components = n
+            except:
+                if self.verbose:
+                    print("failure on {} with {} states".format(self.this_word, n))
+                pass
+        if self.verbose:
+            print("Final model created for {} with {} states".format(self.this_word, best_num_components))
+        return self.base_model(best_num_components)
 
 
 class SelectorDIC(ModelSelector):
@@ -94,7 +112,28 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        best_score = float('-inf')
+        best_num_components = self.n_constant
+        logL_other_sum = 0.
+        for n in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                hmm_model = self.base_model(n)
+                logL = hmm_model.score(self.X, self.lengths)
+                for word in self.words:
+                    if word != self.this_word:
+                        X_other, lengths_other = self.hwords[word]
+                        logL_other_sum += hmm_model.score(X_other, lengths_other)
+                dic_score = logL - logL_other_sum/(len(self.words) - 1)
+                if dic_score > best_score:
+                    best_score = dic_score
+                    best_num_components = n
+            except:
+                if self.verbose:
+                    print("failure on {} with {} states".format(self.this_word, n))
+                pass
+        if self.verbose:
+            print("Final model created for {} with {} states".format(self.this_word, best_num_componentss))
+        return self.base_model(best_num_components)
 
 
 class SelectorCV(ModelSelector):
@@ -102,8 +141,49 @@ class SelectorCV(ModelSelector):
 
     '''
 
-    def select(self):
+    def select(self, n_splits=3):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection using CV
-        raise NotImplementedError
+        best_score = float('-inf')
+        cv_score_mean = best_score
+        best_num_components = self.n_constant
+        if len(self.sequences) < 2:
+            split_method = None
+        else:
+            split_method = KFold(n_splits=min(n_splits, len(self.sequences)))
+        for n in range(self.min_n_components, self.max_n_components + 1):
+            if len(self.sequences) < 2:
+                try:
+                    hmm_model = self.base_model(n)
+                    cv_score_mean = hmm_model.score(self.X, self.sequences)
+                except:
+                    if self.verbose:
+                        print("failure on {} with {} states".format(self.this_word, n))
+                    pass
+            else:
+                cv_scores = []
+                for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+                    try:
+                        hmm_model = GaussianHMM(
+                            n_components=n, 
+                            covariance_type="diag", 
+                            n_iter=1000,
+                            random_state=self.random_state,
+                            verbose=False
+                        ).fit(*combine_sequences(cv_train_idx, self.sequences))
+                        cv_score = hmm_model.score(*combine_sequences(cv_test_idx, self.sequences))
+                        cv_scores.append(cv_score)
+                    except:
+                        if self.verbose:
+                            print("failure on {} with {} states".format(self.this_word, n))
+                        pass
+                if cv_scores:
+                    cv_score_mean = np.mean(cv_scores)
+            if cv_score_mean > best_score:
+                best_score = cv_score_mean
+                best_num_components = n
+
+        if self.verbose:
+            print("Final model created for {} with {} states".format(self.this_word, best_num_componentss))
+        return self.base_model(best_num_components)
